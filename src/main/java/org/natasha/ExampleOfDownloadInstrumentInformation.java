@@ -1,76 +1,72 @@
 package org.natasha;
 
+import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.google.protobuf.Message;
+import io.github.cdimascio.dotenv.Dotenv;
 import lombok.Getter;
 import lombok.Setter;
-import org.json.simple.JSONArray;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.tinkoff.piapi.contract.v1.*;
+import ru.tinkoff.piapi.contract.v1.Currency;
 import ru.tinkoff.piapi.core.InstrumentsService;
 import ru.tinkoff.piapi.contract.v1.InstrumentsServiceGrpc.InstrumentsServiceBlockingStub;
 import ru.tinkoff.piapi.contract.v1.InstrumentsServiceGrpc.InstrumentsServiceStub;
 import ru.tinkoff.piapi.core.InvestApi;
 import ru.tinkoff.piapi.core.exception.ApiRuntimeException;
+import ru.tinkoff.piapi.core.stream.StreamProcessor;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import org.json.simple.JSONObject;
-import org.json.simple.ItemList;
+import java.util.Map;
 
 import static ru.tinkoff.piapi.core.utils.DateUtils.timestampToString;
 import static ru.tinkoff.piapi.core.utils.MapperUtils.moneyValueToBigDecimal;
 import static ru.tinkoff.piapi.core.utils.MapperUtils.quotationToBigDecimal;
 
-@Getter
-@Setter
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+
+
 public class ExampleOfDownloadInstrumentInformation {
     static final Logger log = LoggerFactory.getLogger(Example.class);
-    //String token = "";
-    static JSONObject jsonObject;
-    static JSONArray jsonArray = new JSONArray();
-    static InvestApi sandboxApi = InvestApi.createSandbox(getTok());
+    static final Executor delayedExecutor = CompletableFuture.delayedExecutor(5, TimeUnit.SECONDS);
+    private ObjectMapper jsonMapper = new JsonMapper().registerModule(new SimpleModule().addSerializer(Message.class, new ProtoSerializer()));
+    private Dotenv dotenv = Dotenv.configure()
+            .directory("src/main/resources")
+            .filename(".env") // instead of '.env', use 'env'
+            .load();
+    InvestApi sandboxApi = InvestApi.createSandbox(getEnvTok("TOKEN_SAND"));
 
-    private static String getTok() {
-        String fileName = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/tts.txt"; // путь к файлу
-        List<String> lines = new ArrayList<String>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(fileName))) {
-            for (int i = 0; i < 2; i++) {
-                lines.add(reader.readLine());
-            }
-            //System.out.println(lines);
-        } catch (IOException e) {
-            System.err.println("Ошибка при чтении файла: " + e.getMessage());
-        }
-        return lines.get(1);
-
-    }
-    public static void main(String[] args) throws IOException {
-        //var accountId = sandboxApi.getSandboxService().openAccountSync();
-        //log.info("открыт новый аккаунт в песочнице {}", accountId);
-        System.out.println(sandboxApi.isSandboxMode());
-        // Test board : =>
-        shareInformation();
-        //futuresInformation();
-        //assetsInformation();
-        //timeMarket();
-        //couponBondsInformation();
-        //currenciesInformation();
-        System.out.println(randomFigi(sandboxApi, 2));
-        //sandboxApi.getSandboxService().payIn(mainAccount.getId(), MoneyValue.newBuilder().setUnits(10000).setCurrency("RUB").build());
-        //sandboxApi.getSandboxService().payIn(mainAccount.getId(), MoneyValue.newBuilder().setUnits(10000).setCurrency("USD").build());
+    private String getEnvTok(String s) {
+        return dotenv.get(s);
     }
 
-    private static List<String> randomFigi(InvestApi api, int count) {
+    private List<String> randomUid(InvestApi api, int count) {
+        return api.getInstrumentsService().getTradableSharesSync()
+                .stream()
+                .filter(el -> Boolean.TRUE.equals(el.getApiTradeAvailableFlag()))
+                .map(Share::getUid)
+                .limit(count)
+                .collect(Collectors.toList());
+    }
+
+    private List<String> randomFigi(InvestApi api, int count) {
         return api.getInstrumentsService().getTradableSharesSync()
                 .stream()
                 .filter(el -> Boolean.TRUE.equals(el.getApiTradeAvailableFlag()))
@@ -79,44 +75,38 @@ public class ExampleOfDownloadInstrumentInformation {
                 .collect(Collectors.toList());
     }
 
-    private static void timeMarket() {
-        String marketSheduler = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/marketSheduler.json";
+    public void timeMarket() throws IOException {
+        Path marketSheduler = Paths.get(getEnvTok("PATH_TO_MARK_SHED_FILE"));
         //Получаем время работы биржи
         var tradingSchedules =
                 sandboxApi.getInstrumentsService().getTradingScheduleSync("spb", Instant.now(), Instant.now().plus(5, ChronoUnit.DAYS));
         String[] dates = new String[7];
         int counter = 0;
         for (TradingDay tradingDay : tradingSchedules.getDaysList()) {
-            jsonObject = new JSONObject();
+
             var date = timestampToString(tradingDay.getDate());
             var startDate = timestampToString(tradingDay.getStartTime());
             var endDate = timestampToString(tradingDay.getEndTime());
             if (tradingDay.getIsTradingDay()) {
                 log.info("расписание торгов для площадки SPB. Дата: {},  открытие: {}, закрытие: {}", date, startDate, endDate);
-                dates[counter] = date + " " + startDate + " " + endDate;
+                dates[counter] = date + " Start: " + startDate + " End: " + endDate;
             } else {
                 log.info("расписание торгов для площадки SPB. Дата: {}. Выходной день", date);
-                dates[counter] = date;
+                dates[counter] = counter + " Closed: " + date;
             }
             counter++;
         }
-        System.out.println(Arrays.toString(dates));
-        for (String elem : dates) {
-            jsonObject.put(counter, elem + "\n");
-            counter--;
-        }
-// доделать json newline write
-        writeJson(marketSheduler, jsonObject);
+        jsonMapper.writeValue(Files.newBufferedWriter(marketSheduler), dates);
     }
-// TODO this method
-    static private void couponBondsInformation() throws IOException {
-        String forFile = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/accruedInterests.json";
+
+    // TODO this method
+    public void couponBondsInformation() throws IOException {
+        Path accrInt = Paths.get(getEnvTok("PATH_TO_ACCRUED_INT_FILE"));
         var bonds = sandboxApi.getInstrumentsService().getTradableBondsSync();
-        jsonObject = new JSONObject();
         //Проверяем вывод ошибки в лог
         //Проверяем, что будет ошибка 50002. Об ошибках и причинах их возникновения - https://tinkoff.github.io/investAPI/errors/
         //Для 3 облигаций выводим список НКД
-        Map jsonMap = new HashMap();
+        ArrayList<String> arrayList = new ArrayList<String>();
         for (int i = 0; i < Math.min(bonds.size(), 3); i++) {
             var bond = bonds.get(i);
             var figi = bond.getFigi();
@@ -124,76 +114,64 @@ public class ExampleOfDownloadInstrumentInformation {
                     .getAccruedInterestsSync(figi, Instant.now(), Instant.now().plus(30, ChronoUnit.DAYS));
             for (AccruedInterest accruedInterest : accruedInterests) {
                 log.info("НКД для figi {}: {}", figi, accruedInterest.getValue());
-                jsonObject.put(figi, accruedInterest.getValue());
+                arrayList.add(figi + " : " + accruedInterest.getValue());
             }
 
         }
+        jsonMapper.writeValue(Files.newBufferedWriter(accrInt), arrayList);
         //Получаем инструмент по его figi
-        var instrument = sandboxApi.getInstrumentsService().getInstrumentByFigiSync("BBG00XH4W3N3");
-        log.info(
-                "инструмент figi: {}, лотность: {}, текущий режим торгов: {}, признак внебиржи: {}, признак доступности торгов " +
-                        "через api : {}",
-                instrument.getFigi(),
-                instrument.getLot(),
-                instrument.getTradingStatus().name(),
-                instrument.getOtcFlag(),
-                instrument.getApiTradeAvailableFlag());
-        //инструмент с типом bond
-        var bondUid = bonds.isEmpty();
-        var bondUid2 = bonds.get(0).getUid();
-        var bondFigi = bonds.get(0).getFigi();
-        System.out.println(bondUid);
-        log.info(bondUid2);
-        try {
-            sandboxApi.getInstrumentsService().getCurrencyByFigiSync(bondFigi);
-        } catch (ApiRuntimeException e) {
-            log.info(e.toString());
-        }
-        //??
-
-        Map secMap = new HashMap();
-        //Получаем информацию о купонах облигации //Instant.now().minus(30, ChronoUnit.DAYS), Instant.now()
-        var bondCoupons = sandboxApi.getInstrumentsService().getBondCouponsSync(bondFigi, Instant.now().minus(30, ChronoUnit.DAYS), Instant.now());
-        log.info(bondCoupons.toString());
-        for (Coupon bondCoupon : bondCoupons) {
-            var couponDate = bondCoupon.getCouponDate();
-            var couponType = bondCoupon.getCouponType().getDescriptorForType();
-            var payment = moneyValueToBigDecimal(bondCoupon.getPayOneBond());
-            log.info("выплаты по купонам. дата: {}, тип: {}, выплата на 1 облигацию: {}", couponDate, couponType, payment);
-            jsonObject.put(couponDate, secMap.put(couponType, payment));
-
-        }
-        writeJson(forFile, jsonObject);
+//        var instrument = sandboxApi.getInstrumentsService().getInstrumentByFigiSync("BBG00XH4W3N3");
+//        log.info(
+//                "инструмент figi: {}, лотность: {}, текущий режим торгов: {}, признак внебиржи: {}, признак доступности торгов " +
+//                        "через api : {}",
+//                instrument.getFigi(),
+//                instrument.getLot(),
+//                instrument.getTradingStatus().name(),
+//                instrument.getOtcFlag(),
+//                instrument.getApiTradeAvailableFlag());
+//        //инструмент с типом bond
+//        var bondUid = bonds.isEmpty();
+//        var bondUid2 = bonds.get(0).getUid();
+//        var bondFigi = bonds.get(0).getFigi();
+//        System.out.println(bondUid);
+//        log.info(bondUid2);
+//        try {
+//            sandboxApi.getInstrumentsService().getCurrencyByFigiSync(bondFigi);
+//        } catch (ApiRuntimeException e) {
+//            log.info(e.toString());
+//        }
+//        Map secMap = new HashMap();
+//        //Получаем информацию о купонах облигации //Instant.now().minus(30, ChronoUnit.DAYS), Instant.now()
+//        var bondCoupons = sandboxApi.getInstrumentsService().getBondCouponsSync(bondFigi, Instant.now().minus(30, ChronoUnit.DAYS), Instant.now());
+//        log.info(bondCoupons.toString());
+//        for (Coupon bondCoupon : bondCoupons) {
+//            var couponDate = bondCoupon.getCouponDate();
+//            var couponType = bondCoupon.getCouponType().getDescriptorForType();
+//            var payment = moneyValueToBigDecimal(bondCoupon.getPayOneBond());
+//            log.info("выплаты по купонам. дата: {}, тип: {}, выплата на 1 облигацию: {}", couponDate, couponType, payment);
+//            secMap.put(couponDate, secMap.put(couponType, payment));
+//
+//        }
+//        jsonMapper.writeValue(Files.newBufferedWriter(accrInt), secMap);
 
     }
 
-    static void writeJson(String path, JSONObject jsonObject) {
-        try {
-            FileWriter file = new FileWriter(path);
-            file.write(jsonObject.toJSONString());
-            file.close();
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-    }
-
-    private static void currenciesInformation() {
-        jsonObject = new JSONObject();
-        String path = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/currenciesInformation.json";
+    public void currenciesInformation() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_CURR_INF_FILE"));
+        Map<String, Currency> curr = new HashMap<>();
         var currencies = sandboxApi.getInstrumentsService().getTradableCurrenciesSync();
         for (int i = 0; i < Math.min(currencies.size(), 3); i++) {
             var cur = currencies.get(i);
             var uid = cur.getUid();
             var curEx = sandboxApi.getInstrumentsService().getCurrencyByUidSync(uid);
             log.info(curEx.toString());
-            jsonObject.put("Currency", curEx);
+            curr.put("Currency", curEx);
         }
-        writeJson(path, jsonObject);
+        jsonMapper.writeValue(Files.newBufferedWriter(path), curr);
     }
-    private static void assetsInformation() {
-        jsonObject = new JSONObject();
-        String path = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/assetList.json";
+
+    public void assetsInformation() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_ASSET_DESC_FILE"));
         //Получаем список активов
         var assets = sandboxApi.getInstrumentsService().getAssetsSync().stream().limit(5).collect(Collectors.toList());
         for (int i = 0; i < Math.min(assets.size(), 3); i++) {
@@ -201,49 +179,41 @@ public class ExampleOfDownloadInstrumentInformation {
             var aName = assets.get(i).getName();
             var aType = assets.get(i).getType();
             log.info("актив. uid : {}, имя: {}, тип: {}", aUid, aName, aType);
-            jsonObject.put(assets.get(i).toString(), aUid.toString());
-            jsonObject.put(assets.get(i), aName);
-            jsonObject.put(assets.get(i), aType);
         }
-        writeJson(path, jsonObject);
-        jsonObject = new JSONObject();
-        String assetDescriptions = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/assetDescription.json";
+        jsonMapper.writeValue(Files.newBufferedWriter(path), assets);
         //Получаем подробную информацию о активе
         var uid = assets.get(0).getUid();
         log.info(uid);
         var assetBy = sandboxApi.getInstrumentsService().getAssetBySync(uid);
 
         log.info("подробная информация об активе. описание: {}, статус: {}, бренд: {}", assetBy.getDescription(), assetBy.getStatus(), assetBy.getBrand().getInfo());
-        jsonObject.put(assetBy, assetBy.getDescription());
-        jsonObject.put(assetBy, assetBy.getStatus());
-        jsonObject.put(assetBy, assetBy.getBrand().getInfo());
-        writeJson(assetDescriptions, jsonObject);
+
+        jsonMapper.writeValue(Files.newBufferedWriter(path), assetBy);
     }
 
-    private void etfInformation() {
+    public void etfInformation() throws ExecutionException, InterruptedException {
         var etfs = sandboxApi.getInstrumentsService().getTradableEtfsSync();
-        for (int i = 0; i < Math.min(etfs.size(), 3); i++) {
 
+        for (int i = 0; i < Math.min(etfs.size(), 3); i++) {
             var etf = etfs.get(i);
             var uid = etf.getUid();
             var allEtfs =
-                    sandboxApi.getInstrumentsService().getEtfByPositionUid(uid);
+                    sandboxApi.getInstrumentsService().getEtfByUid(uid).get();
             log.info(" etf - {} : uid - {}", allEtfs, uid);
         }
+
     }
 
-    private static void shareInformation() throws IOException {
+    public void shareInformation() throws IOException {
         var shares = sandboxApi.getInstrumentsService().getTradableSharesSync();
-
-        var path = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/dividendsInformation.json";
-        ObjectMapper objectMapper = new ObjectMapper();
+        Path path = Paths.get(getEnvTok("PATH_TO_DIV_INF_FILE"));
         HashMap<String, String> hashMap = new HashMap<String, String>();
-        FileWriter fileWriter = new FileWriter(path);
         //Для 3 акций выводим список событий по выплате дивидендов
         for (int i = 0; i < Math.min(shares.size(), 3); i++) {
             var share = shares.get(i);
             var figi = share.getFigi();
             var uid = share.getUid();
+            log.info("uid: {} share:  {}", uid, share);
             hashMap.put(uid, share.toString());
             var dividends =
                     sandboxApi.getInstrumentsService().getDividendsSync(figi, Instant.now(), Instant.now().plus(30, ChronoUnit.DAYS));
@@ -253,16 +223,13 @@ public class ExampleOfDownloadInstrumentInformation {
 
             }
         }
-        objectMapper.writeValue(fileWriter, hashMap);
+        jsonMapper.writeValue(Files.newBufferedWriter(path), hashMap);
     }
 
-    private static void futuresInformation() throws IOException {
-        var fInfo = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/futuresInformation.json";
-        ObjectMapper objectMapper = new ObjectMapper();
+    public void futuresInformation() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_FUT_INFO_FILE"));
         var futures = sandboxApi.getInstrumentsService().getTradableFuturesSync();
-        FileWriter file = new FileWriter(fInfo);
-        HashMap<String, String> map = new LinkedHashMap<String, String>();
-        //HashMap<String, String> mapInMap = new LinkedHashMap<String, String>();
+        HashMap<String, GetFuturesMarginResponse> mapInMap = new LinkedHashMap<String, GetFuturesMarginResponse>();
         ArrayList<String> arrayList = new ArrayList<String>();
         //Для 3 фьючерсов выводим размер обеспечения
         for (int i = 0; i < Math.min(futures.size(), 3); i++) {
@@ -270,37 +237,150 @@ public class ExampleOfDownloadInstrumentInformation {
             var figi = future.getFigi();
             var futuresMargin = sandboxApi.getInstrumentsService().getFuturesMarginSync(figi);
             log.info("гарантийное обеспечение при покупке для figi {}: {}", figi, moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy()));
-            String marginOnBuy = String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy()));
-            arrayList.add("\n гарантийное обеспечение при покупке: " + marginOnBuy);
+            //mapInMap.put(figi,moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy());
             log.info("гарантийное обеспечение при продаже для figi {}: {}", figi, moneyValueToBigDecimal(futuresMargin.getInitialMarginOnSell()));
-            String marginOnSell = String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnSell()));
-            arrayList.add("\n гарантийное обеспечение при продаже: " + marginOnSell);
+            // mapInMap.put(String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy())), String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnSell())));
             log.info("шаг цены figi для {}: {}", figi, quotationToBigDecimal(futuresMargin.getMinPriceIncrement()));
-            String minPriceIncrement = String.valueOf(quotationToBigDecimal(futuresMargin.getMinPriceIncrement()));
-            arrayList.add("\n шаг цены: " + minPriceIncrement);
-            log.info("стоимость шага цены для figi {}: {}", figi, quotationToBigDecimal(futuresMargin.getMinPriceIncrementAmount()));
-            String minPriceIncrementAmount = String.valueOf(quotationToBigDecimal(futuresMargin.getMinPriceIncrementAmount()));
-            arrayList.add("\n стоимость шага цены: " + minPriceIncrementAmount);
 
-//            map.put(figi, marginOnBuy);
-//            map.put(marginOnBuy, marginOnSell);
-//            map.put(minPriceIncrement, minPriceIncrementAmount);
+            log.info("стоимость шага цены для figi {}: {}", figi, quotationToBigDecimal(futuresMargin.getMinPriceIncrementAmount()));
+            mapInMap.put("future", futuresMargin);
+
         }
-        objectMapper.writeValue(file, arrayList);
+
+        jsonMapper.writeValue(Files.newBufferedWriter(path), mapInMap);
     }
 
-    // AIA - AccountIdAndAccessLevel
-    private static void outAIALevel() {
-        String outputFileName = "/home/morbro/IdeaProjects/NewTinkoffApiTest/src/main/resources/outAccountIdAndAccessLevel.json";
+    // AIAL - AccountIdAndAccessLevel
+    private void outAIALevel() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_AIA_LEVEL_FILE"));
         var accounts = sandboxApi.getUserService().getAccountsSync();
         var mainAccount = accounts.get(0);
-        jsonObject = new JSONObject();
+        Map<String, String> map = new HashMap<>();
         log.info("sandbox account id: {}, access level: {}", mainAccount.getId(), mainAccount.getAccessLevel().name());
-        jsonObject.put(mainAccount.getId(), mainAccount.getAccessLevel().name());
+        map.put(mainAccount.getId(), mainAccount.getAccessLevel().name());
         log.info("тариф должен быть sandbox. фактический тариф: {}", sandboxApi.getUserService().getInfoSync().getTariff());
-        jsonObject.put("tariff: ", sandboxApi.getUserService().getInfoSync().getTariff());
+        map.put("tariff: ", sandboxApi.getUserService().getInfoSync().getTariff());
         // Test
-        writeJson(outputFileName, jsonObject);
+        jsonMapper.writeValue(Files.newBufferedWriter(path), map);
     }
 
+
+    public void getOperationsByCursorExample(InvestApi api) {
+        var accounts = api.getUserService().getAccountsSync();
+        var mainAccount = accounts.get(0).getId();
+
+        //Получаем и печатаем список операций клиента
+        var operations = api.getOperationsService()
+                .getOperationByCursorSync(mainAccount, Instant.now().minus(30, ChronoUnit.DAYS), Instant.now())
+                .getItemsList();
+        for (int i = 0; i < Math.min(operations.size(), 5); i++) {
+            var operation = operations.get(i);
+            var date = timestampToString(operation.getDate());
+            var state = operation.getState().name();
+            var id = operation.getId();
+            var payment = moneyValueToBigDecimal(operation.getPayment());
+            var assetUid = operation.getAssetUid();
+            log.info("операция с id: {}, дата: {}, статус: {}, платеж: {}, assetUid: {}", id, date, state, payment, assetUid);
+        }
+
+        //Метод так же позволяет отфильтровать операции по многим параметрам
+        operations = api.getOperationsService()
+                .getOperationByCursorSync(
+                        mainAccount,
+                        Instant.now().minus(30, ChronoUnit.DAYS),
+                        Instant.now(),
+                        null,
+                        10,
+                        OperationState.OPERATION_STATE_EXECUTED,
+                        "BBG00RPRPX12",
+                        true,
+                        true,
+                        true,
+                        List.of(OperationType.OPERATION_TYPE_BUY, OperationType.OPERATION_TYPE_SELL))
+                .getItemsList();
+
+        for (int i = 0; i < Math.min(operations.size(), 5); i++) {
+            var operation = operations.get(i);
+            var date = timestampToString(operation.getDate());
+            var state = operation.getState().name();
+            var id = operation.getId();
+            var payment = moneyValueToBigDecimal(operation.getPayment());
+            var instrumentUid = operation.getInstrumentUid();
+            log.info("операция с id: {}, дата: {}, статус: {}, платеж: {}, instrumentUid: {}", id, date, state, payment, instrumentUid);
+        }
+    }
+
+    public void marketdataStreamExample(InvestApi api) {
+        var randomUid = randomUid(api, 5);
+
+        //Описываем, что делать с приходящими в стриме данными
+        StreamProcessor<MarketDataResponse> processor = response -> {
+            if (response.hasTradingStatus()) {
+                log.info("Новые данные по статусам: {}", response);
+            } else if (response.hasPing()) {
+                log.info("пинг сообщение");
+            } else if (response.hasCandle()) {
+                log.info("Новые данные по свечам: {}", response);
+            } else if (response.hasOrderbook()) {
+                log.info("Новые данные по стакану: {}", response);
+            } else if (response.hasTrade()) {
+                log.info("Новые данные по сделкам: {}", response);
+            } else if (response.hasSubscribeCandlesResponse()) {
+                var subscribeResult = response.getSubscribeCandlesResponse().getCandlesSubscriptionsList().stream()
+                        .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
+                logSubscribeStatus("свечи", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+            } else if (response.hasSubscribeInfoResponse()) {
+                var subscribeResult = response.getSubscribeInfoResponse().getInfoSubscriptionsList().stream()
+                        .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
+                logSubscribeStatus("статусы", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+            } else if (response.hasSubscribeOrderBookResponse()) {
+                var subscribeResult = response.getSubscribeOrderBookResponse().getOrderBookSubscriptionsList().stream()
+                        .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
+                logSubscribeStatus("стакан", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+            } else if (response.hasSubscribeTradesResponse()) {
+                var subscribeResult = response.getSubscribeTradesResponse().getTradeSubscriptionsList().stream()
+                        .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
+                logSubscribeStatus("сделки", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+            } else if (response.hasSubscribeLastPriceResponse()) {
+                var subscribeResult = response.getSubscribeLastPriceResponse().getLastPriceSubscriptionsList().stream()
+                        .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
+                logSubscribeStatus("последние цены", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+            }
+        };
+        Consumer<Throwable> onErrorCallback = error -> log.error(error.toString());
+
+        //Подписка на список инструментов. Не блокирующий вызов
+        //При необходимости обработки ошибок (реконнект по вине сервера или клиента), рекомендуется сделать onErrorCallback
+        api.getMarketDataStreamService().newStream("trades_stream", processor, onErrorCallback).subscribeTrades(randomUid);
+        api.getMarketDataStreamService().newStream("candles_stream", processor, onErrorCallback).subscribeCandles(randomUid);
+        api.getMarketDataStreamService().newStream("info_stream", processor, onErrorCallback).subscribeInfo(randomUid);
+        api.getMarketDataStreamService().newStream("orderbook_stream", processor, onErrorCallback).subscribeOrderbook(randomUid);
+        api.getMarketDataStreamService().newStream("last_prices_stream", processor, onErrorCallback).subscribeLastPrices(randomUid);
+
+
+        //Для стримов стаканов и свечей есть перегруженные методы с дефолтными значениями
+        //глубина стакана = 10, интервал свечи = 1 минута
+        api.getMarketDataStreamService().getStreamById("trades_stream").subscribeOrderbook(randomUid);
+        api.getMarketDataStreamService().getStreamById("candles_stream").subscribeCandles(randomUid);
+        api.getMarketDataStreamService().getStreamById("candles_stream").cancel();
+        //отписываемся от стримов с задержкой
+        CompletableFuture.runAsync(() -> {
+
+                    //Отписка на список инструментов. Не блокирующий вызов
+                    api.getMarketDataStreamService().getStreamById("trades_stream").unsubscribeTrades(randomUid);
+                    api.getMarketDataStreamService().getStreamById("candles_stream").unsubscribeCandles(randomUid);
+                    api.getMarketDataStreamService().getStreamById("info_stream").unsubscribeInfo(randomUid);
+                    api.getMarketDataStreamService().getStreamById("orderbook_stream").unsubscribeOrderbook(randomUid);
+                    api.getMarketDataStreamService().getStreamById("last_prices_stream").unsubscribeLastPrices(randomUid);
+
+                    //закрытие стрима
+                    api.getMarketDataStreamService().getStreamById("candles_stream").cancel();
+
+                }, delayedExecutor)
+                .thenRun(() -> log.info("market data unsubscribe done"));
+
+    }
+    private void logSubscribeStatus(String eventType, Long successed, Long failed) {
+        log.info("удачных подписок на {}: {}. неудачных подписок на {}: {}.", eventType, successed, eventType, failed);
+    }
 }
