@@ -80,7 +80,6 @@ public class ExampleOfDownloadInstrumentInformation {
         //Получаем время работы биржи
         var tradingSchedules =
                 sandboxApi.getInstrumentsService().getTradingScheduleSync("spb", Instant.now(), Instant.now().plus(5, ChronoUnit.DAYS));
-        String[] dates = new String[7];
         int counter = 0;
         for (TradingDay tradingDay : tradingSchedules.getDaysList()) {
 
@@ -89,36 +88,33 @@ public class ExampleOfDownloadInstrumentInformation {
             var endDate = timestampToString(tradingDay.getEndTime());
             if (tradingDay.getIsTradingDay()) {
                 log.info("расписание торгов для площадки SPB. Дата: {},  открытие: {}, закрытие: {}", date, startDate, endDate);
-                dates[counter] = date + " Start: " + startDate + " End: " + endDate;
             } else {
                 log.info("расписание торгов для площадки SPB. Дата: {}. Выходной день", date);
-                dates[counter] = counter + " Closed: " + date;
             }
             counter++;
         }
-        jsonMapper.writeValue(Files.newBufferedWriter(marketSheduler), dates);
+        jsonMapper.writeValue(Files.newBufferedWriter(marketSheduler), tradingSchedules);
     }
 
     // TODO this method
     public void couponBondsInformation() throws IOException {
-        Path accrInt = Paths.get(getEnvTok("PATH_TO_ACCRUED_INT_FILE"));
+        Path path = Paths.get(getEnvTok("PATH_TO_ACCRUED_INT_FILE"));
         var bonds = sandboxApi.getInstrumentsService().getTradableBondsSync();
         //Проверяем вывод ошибки в лог
         //Проверяем, что будет ошибка 50002. Об ошибках и причинах их возникновения - https://tinkoff.github.io/investAPI/errors/
         //Для 3 облигаций выводим список НКД
-        ArrayList<String> arrayList = new ArrayList<String>();
+        HashMap<String, Object> hMap = new HashMap<>();
         for (int i = 0; i < Math.min(bonds.size(), 3); i++) {
             var bond = bonds.get(i);
             var figi = bond.getFigi();
             var accruedInterests = sandboxApi.getInstrumentsService()
                     .getAccruedInterestsSync(figi, Instant.now(), Instant.now().plus(30, ChronoUnit.DAYS));
             for (AccruedInterest accruedInterest : accruedInterests) {
-                log.info("НКД для figi {}: {}", figi, accruedInterest.getValue());
-                arrayList.add(figi + " : " + accruedInterest.getValue());
-            }
+                log.info("НКД для figi {}: {}", figi, accruedInterest);
 
+            }
         }
-        jsonMapper.writeValue(Files.newBufferedWriter(accrInt), arrayList);
+        jsonMapper.writeValue(Files.newBufferedWriter(path), bonds);
         //Получаем инструмент по его figi
 //        var instrument = sandboxApi.getInstrumentsService().getInstrumentByFigiSync("BBG00XH4W3N3");
 //        log.info(
@@ -165,13 +161,14 @@ public class ExampleOfDownloadInstrumentInformation {
             var uid = cur.getUid();
             var curEx = sandboxApi.getInstrumentsService().getCurrencyByUidSync(uid);
             log.info(curEx.toString());
-            curr.put("Currency", curEx);
+            curr.put(curEx.getName(), curEx);
         }
         jsonMapper.writeValue(Files.newBufferedWriter(path), curr);
     }
 
     public void assetsInformation() throws IOException {
-        Path path = Paths.get(getEnvTok("PATH_TO_ASSET_DESC_FILE"));
+        Path path = Paths.get(getEnvTok("PATH_TO_ASSETS_DESC_FILE"));
+        HashMap<String, Object> hMap = new HashMap<>();
         //Получаем список активов
         var assets = sandboxApi.getInstrumentsService().getAssetsSync().stream().limit(5).collect(Collectors.toList());
         for (int i = 0; i < Math.min(assets.size(), 3); i++) {
@@ -182,64 +179,74 @@ public class ExampleOfDownloadInstrumentInformation {
         }
         jsonMapper.writeValue(Files.newBufferedWriter(path), assets);
         //Получаем подробную информацию о активе
-        var uid = assets.get(0).getUid();
+    }
+    public void assetInformation() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_ASSET_DESC_FILE"));
+        var assets = sandboxApi.getInstrumentsService().getAssetsSync().stream().limit(5).collect(Collectors.toList());
+        var uid = assets.get(4).getUid();
         log.info(uid);
         var assetBy = sandboxApi.getInstrumentsService().getAssetBySync(uid);
 
         log.info("подробная информация об активе. описание: {}, статус: {}, бренд: {}", assetBy.getDescription(), assetBy.getStatus(), assetBy.getBrand().getInfo());
 
         jsonMapper.writeValue(Files.newBufferedWriter(path), assetBy);
+
     }
 
-    public void etfInformation() throws ExecutionException, InterruptedException {
+    public void etfInformation() throws ExecutionException, InterruptedException, IOException {
         var etfs = sandboxApi.getInstrumentsService().getTradableEtfsSync();
-
+        Path path = Paths.get(getEnvTok("PATH_TO_ETF_INFO_FILE"));
+        HashMap<String, Etf> hMap = new HashMap<>();
         for (int i = 0; i < Math.min(etfs.size(), 3); i++) {
             var etf = etfs.get(i);
             var uid = etf.getUid();
             var allEtfs =
                     sandboxApi.getInstrumentsService().getEtfByUid(uid).get();
             log.info(" etf - {} : uid - {}", allEtfs, uid);
+            hMap.put("Etf", allEtfs);
         }
-
+        jsonMapper.writeValue(Files.newBufferedWriter(path), hMap);
     }
 
     public void shareInformation() throws IOException {
         var shares = sandboxApi.getInstrumentsService().getTradableSharesSync();
-        Path path = Paths.get(getEnvTok("PATH_TO_DIV_INF_FILE"));
-        HashMap<String, String> hashMap = new HashMap<String, String>();
+        Path path = Paths.get(getEnvTok("PATH_TO_SHA_INF_FILE"));
+        HashMap<String, Share> hashMap = new HashMap<>();
+        //HashMap<String, Dividend> hMap = new HashMap<>();
         //Для 3 акций выводим список событий по выплате дивидендов
         for (int i = 0; i < Math.min(shares.size(), 3); i++) {
             var share = shares.get(i);
             var figi = share.getFigi();
             var uid = share.getUid();
             log.info("uid: {} share:  {}", uid, share);
-            hashMap.put(uid, share.toString());
+            hashMap.put(uid, share);
+            //empty
             var dividends =
                     sandboxApi.getInstrumentsService().getDividendsSync(figi, Instant.now(), Instant.now().plus(30, ChronoUnit.DAYS));
-            for (Dividend dividend : dividends) {
-                log.info("дивиденд для figi {}: {}", figi, dividend);
-                hashMap.put(figi, dividend.toString());
-
-            }
+//            for (Dividend dividend : dividends) {
+//                log.info("дивиденд для figi {}: {}", figi, dividend);
+//                hMap.put(figi, dividend);
+//
+//            }
         }
         jsonMapper.writeValue(Files.newBufferedWriter(path), hashMap);
+        //jsonMapper.writeValue(Files.newBufferedWriter(path), hMap);
     }
 
     public void futuresInformation() throws IOException {
         Path path = Paths.get(getEnvTok("PATH_TO_FUT_INFO_FILE"));
         var futures = sandboxApi.getInstrumentsService().getTradableFuturesSync();
         HashMap<String, GetFuturesMarginResponse> mapInMap = new LinkedHashMap<String, GetFuturesMarginResponse>();
-        ArrayList<String> arrayList = new ArrayList<String>();
+
         //Для 3 фьючерсов выводим размер обеспечения
         for (int i = 0; i < Math.min(futures.size(), 3); i++) {
             var future = futures.get(i);
             var figi = future.getFigi();
             var futuresMargin = sandboxApi.getInstrumentsService().getFuturesMarginSync(figi);
             log.info("гарантийное обеспечение при покупке для figi {}: {}", figi, moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy()));
-            //mapInMap.put(figi,moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy());
+
             log.info("гарантийное обеспечение при продаже для figi {}: {}", figi, moneyValueToBigDecimal(futuresMargin.getInitialMarginOnSell()));
-            // mapInMap.put(String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnBuy())), String.valueOf(moneyValueToBigDecimal(futuresMargin.getInitialMarginOnSell())));
+
             log.info("шаг цены figi для {}: {}", figi, quotationToBigDecimal(futuresMargin.getMinPriceIncrement()));
 
             log.info("стоимость шага цены для figi {}: {}", figi, quotationToBigDecimal(futuresMargin.getMinPriceIncrementAmount()));
@@ -251,20 +258,21 @@ public class ExampleOfDownloadInstrumentInformation {
     }
 
     // AIAL - AccountIdAndAccessLevel
-    private void outAIALevel() throws IOException {
+    public void outAIALevel() throws IOException {
         Path path = Paths.get(getEnvTok("PATH_TO_AIA_LEVEL_FILE"));
         var accounts = sandboxApi.getUserService().getAccountsSync();
         var mainAccount = accounts.get(0);
-        Map<String, String> map = new HashMap<>();
+        Map<String, Account> map = new HashMap<>();
         log.info("sandbox account id: {}, access level: {}", mainAccount.getId(), mainAccount.getAccessLevel().name());
-        map.put(mainAccount.getId(), mainAccount.getAccessLevel().name());
+        //map.put(mainAccount.getId(), mainAccount.getAccessLevel().name());
         log.info("тариф должен быть sandbox. фактический тариф: {}", sandboxApi.getUserService().getInfoSync().getTariff());
-        map.put("tariff: ", sandboxApi.getUserService().getInfoSync().getTariff());
+        //map.put("tariff: ", sandboxApi.getUserService().getInfoSync().getTariff());
         // Test
+        map.put("account information", mainAccount);
         jsonMapper.writeValue(Files.newBufferedWriter(path), map);
     }
 
-
+    //Dont work in sandbox
     public void getOperationsByCursorExample(InvestApi api) {
         var accounts = api.getUserService().getAccountsSync();
         var mainAccount = accounts.get(0).getId();
@@ -380,6 +388,7 @@ public class ExampleOfDownloadInstrumentInformation {
                 .thenRun(() -> log.info("market data unsubscribe done"));
 
     }
+
     private void logSubscribeStatus(String eventType, Long successed, Long failed) {
         log.info("удачных подписок на {}: {}. неудачных подписок на {}: {}.", eventType, successed, eventType, failed);
     }

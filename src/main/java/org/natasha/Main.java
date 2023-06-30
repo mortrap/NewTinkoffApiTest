@@ -11,6 +11,13 @@ public class Main {
         ExampleOfDownloadInstrumentInformation eodii = new ExampleOfDownloadInstrumentInformation();
         // eodii.marketdataStreamExample(eodii.sandboxApi);
         //eodii.futuresInformation();
-        eodii.getOperationsByCursorExample(eodii.sandboxApi);
+        //eodii.getOperationsByCursorExample(eodii.sandboxApi);
+        //eodii.outAIALevel();
+        //eodii.shareInformation();
+        //eodii.etfInformation();
+        //eodii.assetInformation();
+        //eodii.currenciesInformation();
+        //eodii.couponBondsInformation();
+        eodii.timeMarket();
     }
 }
