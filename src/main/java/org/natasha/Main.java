@@ -9,7 +9,7 @@ import java.util.concurrent.ExecutionException;
 public class Main {
     public static void main(String[] args) throws ExecutionException, InterruptedException, IOException {
         ExampleOfDownloadInstrumentInformation eodii = new ExampleOfDownloadInstrumentInformation();
-        // eodii.marketdataStreamExample(eodii.sandboxApi);
+         eodii.marketdataStreamExample(eodii.sandboxApi);
         //eodii.futuresInformation();
         //eodii.getOperationsByCursorExample(eodii.sandboxApi);
         //eodii.outAIALevel();
@@ -18,6 +18,8 @@ public class Main {
         //eodii.assetInformation();
         //eodii.currenciesInformation();
         //eodii.couponBondsInformation();
-        eodii.timeMarket();
+        //eodii.timeMarket();
+        //eodii.instrumentInfo();
+
     }
 }

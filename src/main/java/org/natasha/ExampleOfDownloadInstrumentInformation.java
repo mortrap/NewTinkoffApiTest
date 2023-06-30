@@ -46,8 +46,8 @@ import java.nio.file.Files;
 public class ExampleOfDownloadInstrumentInformation {
     static final Logger log = LoggerFactory.getLogger(Example.class);
     static final Executor delayedExecutor = CompletableFuture.delayedExecutor(5, TimeUnit.SECONDS);
-    private ObjectMapper jsonMapper = new JsonMapper().registerModule(new SimpleModule().addSerializer(Message.class, new ProtoSerializer()));
-    private Dotenv dotenv = Dotenv.configure()
+    private final ObjectMapper jsonMapper = new JsonMapper().registerModule(new SimpleModule().addSerializer(Message.class, new ProtoSerializer()));
+    private final Dotenv dotenv = Dotenv.configure()
             .directory("src/main/resources")
             .filename(".env") // instead of '.env', use 'env'
             .load();
@@ -115,40 +115,6 @@ public class ExampleOfDownloadInstrumentInformation {
             }
         }
         jsonMapper.writeValue(Files.newBufferedWriter(path), bonds);
-        //Получаем инструмент по его figi
-//        var instrument = sandboxApi.getInstrumentsService().getInstrumentByFigiSync("BBG00XH4W3N3");
-//        log.info(
-//                "инструмент figi: {}, лотность: {}, текущий режим торгов: {}, признак внебиржи: {}, признак доступности торгов " +
-//                        "через api : {}",
-//                instrument.getFigi(),
-//                instrument.getLot(),
-//                instrument.getTradingStatus().name(),
-//                instrument.getOtcFlag(),
-//                instrument.getApiTradeAvailableFlag());
-//        //инструмент с типом bond
-//        var bondUid = bonds.isEmpty();
-//        var bondUid2 = bonds.get(0).getUid();
-//        var bondFigi = bonds.get(0).getFigi();
-//        System.out.println(bondUid);
-//        log.info(bondUid2);
-//        try {
-//            sandboxApi.getInstrumentsService().getCurrencyByFigiSync(bondFigi);
-//        } catch (ApiRuntimeException e) {
-//            log.info(e.toString());
-//        }
-//        Map secMap = new HashMap();
-//        //Получаем информацию о купонах облигации //Instant.now().minus(30, ChronoUnit.DAYS), Instant.now()
-//        var bondCoupons = sandboxApi.getInstrumentsService().getBondCouponsSync(bondFigi, Instant.now().minus(30, ChronoUnit.DAYS), Instant.now());
-//        log.info(bondCoupons.toString());
-//        for (Coupon bondCoupon : bondCoupons) {
-//            var couponDate = bondCoupon.getCouponDate();
-//            var couponType = bondCoupon.getCouponType().getDescriptorForType();
-//            var payment = moneyValueToBigDecimal(bondCoupon.getPayOneBond());
-//            log.info("выплаты по купонам. дата: {}, тип: {}, выплата на 1 облигацию: {}", couponDate, couponType, payment);
-//            secMap.put(couponDate, secMap.put(couponType, payment));
-//
-//        }
-//        jsonMapper.writeValue(Files.newBufferedWriter(accrInt), secMap);
 
     }
 
@@ -180,6 +146,7 @@ public class ExampleOfDownloadInstrumentInformation {
         jsonMapper.writeValue(Files.newBufferedWriter(path), assets);
         //Получаем подробную информацию о активе
     }
+
     public void assetInformation() throws IOException {
         Path path = Paths.get(getEnvTok("PATH_TO_ASSET_DESC_FILE"));
         var assets = sandboxApi.getInstrumentsService().getAssetsSync().stream().limit(5).collect(Collectors.toList());
@@ -257,6 +224,40 @@ public class ExampleOfDownloadInstrumentInformation {
         jsonMapper.writeValue(Files.newBufferedWriter(path), mapInMap);
     }
 
+    public void instrumentInfo() throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_INSTRUMENT_INFO_FILE"));
+        var bonds = sandboxApi.getInstrumentsService().getTradableBondsSync().stream().limit(5).collect(Collectors.toList());
+        //Получаем инструмент по его figi
+        var instrument = sandboxApi.getInstrumentsService().getInstrumentByFigiSync(bonds.get(0).getFigi());
+        log.info(
+                "инструмент figi: {}, лотность: {}, текущий режим торгов: {}, признак внебиржи: {}, признак доступности торгов " +
+                        "через api : {}",
+                instrument.getFigi(),
+                instrument.getLot(),
+                instrument.getTradingStatus().name(),
+                instrument.getOtcFlag(),
+                instrument.getApiTradeAvailableFlag());
+        jsonMapper.writeValue(Files.newBufferedWriter(path), instrument);
+
+        Path sPath = Paths.get(getEnvTok("PATH_TO_BOUND_TYPE_INSTRUMENT_FILE"));
+        //инструмент с типом bond
+        var bondUid2 = bonds.get(0).getUid();
+        var bondFigi = bonds.get(0).getFigi();
+
+        log.info(bondUid2);
+        log.info(bondFigi);
+//        try {
+//            sandboxApi.getInstrumentsService().getCurrencyByFigiSync(bondFigi);
+//        } catch (ApiRuntimeException e) {
+//            log.info(e.toString());
+//        }
+        //Получаем информацию о купонах облигации //Instant.now().minus(30, ChronoUnit.DAYS), Instant.now()
+        var bondCoupons = sandboxApi.getInstrumentsService().getTradableBondsSync().stream().limit(5).collect(Collectors.toList());
+        log.info(String.valueOf(bondCoupons.get(0)));
+        jsonMapper.writeValue(Files.newBufferedWriter(sPath), bondCoupons);
+
+    }
+
     // AIAL - AccountIdAndAccessLevel
     public void outAIALevel() throws IOException {
         Path path = Paths.get(getEnvTok("PATH_TO_AIA_LEVEL_FILE"));
@@ -272,7 +273,7 @@ public class ExampleOfDownloadInstrumentInformation {
         jsonMapper.writeValue(Files.newBufferedWriter(path), map);
     }
 
-    //Dont work in sandbox
+    //TODO dont work in sandbox,to test in real market
     public void getOperationsByCursorExample(InvestApi api) {
         var accounts = api.getUserService().getAccountsSync();
         var mainAccount = accounts.get(0).getId();
@@ -317,8 +318,9 @@ public class ExampleOfDownloadInstrumentInformation {
             log.info("операция с id: {}, дата: {}, статус: {}, платеж: {}, instrumentUid: {}", id, date, state, payment, instrumentUid);
         }
     }
-
-    public void marketdataStreamExample(InvestApi api) {
+// TODO to understanding this method
+    public void marketdataStreamExample(InvestApi api) throws IOException {
+        Path path = Paths.get(getEnvTok("PATH_TO_MARKET_DATA_STREAM_FILE"));
         var randomUid = randomUid(api, 5);
 
         //Описываем, что делать с приходящими в стриме данными
@@ -353,12 +355,15 @@ public class ExampleOfDownloadInstrumentInformation {
                 var subscribeResult = response.getSubscribeLastPriceResponse().getLastPriceSubscriptionsList().stream()
                         .collect(Collectors.groupingBy(el -> el.getSubscriptionStatus().equals(SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS), Collectors.counting()));
                 logSubscribeStatus("последние цены", subscribeResult.getOrDefault(true, 0L), subscribeResult.getOrDefault(false, 0L));
+
             }
         };
+
         Consumer<Throwable> onErrorCallback = error -> log.error(error.toString());
 
         //Подписка на список инструментов. Не блокирующий вызов
         //При необходимости обработки ошибок (реконнект по вине сервера или клиента), рекомендуется сделать onErrorCallback
+
         api.getMarketDataStreamService().newStream("trades_stream", processor, onErrorCallback).subscribeTrades(randomUid);
         api.getMarketDataStreamService().newStream("candles_stream", processor, onErrorCallback).subscribeCandles(randomUid);
         api.getMarketDataStreamService().newStream("info_stream", processor, onErrorCallback).subscribeInfo(randomUid);
